@@ -46,6 +46,7 @@
           sort
           delq delv
           run-shell-command user-homedir-pathname system-tmpdir-pathname
+          working-directory-pathname pwd with-working-directory-pathname
           ->namestring
           graphics-type graphics-type-name)
   (import (rename (except (rnrs) error assert) (remq delq) (remv delv))
@@ -54,218 +55,239 @@
           (only (chezscheme) load eval eval-when case-sensitive void pretty-print
                 warning format void
                 current-time time-second time-nanosecond
-                gensym 1+ getenv system break)
+                gensym 1+ getenv system break path-parent cd parameterize)
           (prefix (only (chezscheme) error sort) chez:)
           (only (srfi :13) string-index string-contains)
           (except (mit arity) procedure-arity) ; use version in apply-hook
           (mit curry)
           (mit arithmetic))
 
-;; Declare is used at the start of files.  According to R6RS a library
-;; must start with definitions.  (define (declare args) (if #f #f))
-(define-syntax declare
-  (syntax-rules ()
-    ((_ args ...) (define #:declare args ...))))
+  ;; Declare is used at the start of files.  According to R6RS a library
+  ;; must start with definitions.  (define (declare args) (if #f #f))
+  (define-syntax declare
+    (syntax-rules ()
+      ((_ args ...) (define #:declare args ...))))
 
-(define (usual-integrations . args) #f)
+  (define (usual-integrations . args) #f)
 
-(define-syntax integrate-operator
-  (syntax-rules ()
-    ((_ args ...) unspecific)))
+  (define-syntax integrate-operator
+    (syntax-rules ()
+      ((_ args ...) unspecific)))
 
-(define-syntax integrate
-  (syntax-rules ()
-    ((_ args ...) unspecific)))
+  (define-syntax integrate
+    (syntax-rules ()
+      ((_ args ...) unspecific)))
 
-(define (load* f env)
-  (load (string-append f ".scm")
-        (lambda (x)
-          (eval x env))))
+  (define (load* f env)
+    (if (list? f)
+        (for-each (lambda (f)
+                    (load (string-append f ".scm")
+                          (lambda (x)
+                            (eval x env))))
+                  f)
+        (load (string-append f ".scm")
+              (lambda (x)
+                (eval x env)))))
 
-(eval-when (compile eval load)
-  (define (start-canonicalizing-symbols!)
-    (case-sensitive #f))
+  (eval-when (compile eval load)
+             (define (start-canonicalizing-symbols!)
+               (case-sensitive #f))
 
-  (define (start-preserving-case!)
-    (case-sensitive #t)))
+             (define (start-preserving-case!)
+               (case-sensitive #t)))
 
-(define (default-object? x)
-  (eq? (void) x))
+  (define (default-object? x)
+    (eq? (void) x))
 
-(define-syntax define-integrable
-  (syntax-rules ()
-    ((_ form body ...) (define form body ...))))
+  (define-syntax define-integrable
+    (syntax-rules ()
+      ((_ form body ...) (define form body ...))))
 
-(define* (pp object #:optional (port (current-output-port)) (display? #f))
-  (pretty-print object port))
+  (define* (pp object #:optional (port (current-output-port)) (display? #f))
+    (pretty-print object port))
 
-(define print pp)
+  (define print pp)
 
-(define* (error msg #:optional (irritant 'not-specified) . rest)
-  (apply chez:error 'not-specified msg irritant rest))
+  (define* (error msg #:optional (irritant 'not-specified) . rest)
+    (apply chez:error 'not-specified msg irritant rest))
 
-(define* (warn msg #:optional (irritant 'not-specified) . rest)
-  (apply warning 'warn msg irritant rest))
+  (define* (warn msg #:optional (irritant 'not-specified) . rest)
+    (apply warning 'warn msg irritant rest))
 
-(define-syntax assert
-  (syntax-rules ()
-    ((_ form rest ...) (r6rs:assert form))))
+  (define-syntax assert
+    (syntax-rules ()
+      ((_ form rest ...) (r6rs:assert form))))
 
-(define* (ignore-errors thunk #:optional map-error)
-  (call-with-current-continuation
-   (lambda (k)
-     (with-exception-handler
-       (lambda (x)
-         (cond ((or (default-object? map-error)
-                    (not map-error))
-                (if (error? x) (k x) x))
-               ((and (procedure? map-error)
-                     (procedure-arity-valid? map-error 1))
-                (lambda (condition)
-                  (k (map-error condition))))
-               (else
-                (error "wrong-type-argument" map-error
-                       "map-error procedure"
-                       'IGNORE-ERRORS))))
-              thunk))))
+  (define* (ignore-errors thunk #:optional map-error)
+    (call-with-current-continuation
+     (lambda (k)
+       (with-exception-handler
+           (lambda (x)
+             (cond ((or (default-object? map-error)
+                        (not map-error))
+                    (if (error? x) (k x) x))
+                   ((and (procedure? map-error)
+                         (procedure-arity-valid? map-error 1))
+                    (lambda (condition)
+                      (k (map-error condition))))
+                   (else
+                    (error "wrong-type-argument" map-error
+                           "map-error procedure"
+                           'IGNORE-ERRORS))))
+         thunk))))
 
-(define (bkpt datum . arguments)
-  (break 'bkpt datum arguments))
+  (define (bkpt datum . arguments)
+    (break 'bkpt datum arguments))
 
-(define (guarantee-symbol x msg)
-  (if (not (symbol? x))
-      (error msg x "not a symbol")))
+  (define (guarantee-symbol x msg)
+    (if (not (symbol? x))
+        (error msg x "not a symbol")))
 
-(define (exact-rational? x)
-  (and (rational? x)
-       (exact? x)))
+  (define (exact-rational? x)
+    (and (rational? x)
+         (exact? x)))
 
-(define (exact-positive-integer? x)
-  (and (integer? x)
-       (positive? x)
-       (exact? x)))
+  (define (exact-positive-integer? x)
+    (and (integer? x)
+         (positive? x)
+         (exact? x)))
 
-(define (exact-integer? x)
-  (and (integer? x)
-       (exact? x)))
+  (define (exact-integer? x)
+    (and (integer? x)
+         (exact? x)))
 
-(define (exact-nonnegative-integer? x)
-  (and (integer? x)
-       (not (negative? x))
-       (exact? x)))
+  (define (exact-nonnegative-integer? x)
+    (and (integer? x)
+         (not (negative? x))
+         (exact? x)))
 
-(define (guarantee-exact-integer x msg)
-  (if (not (exact-integer? x))
-      (error msg x "not an exact integer")))
+  (define (guarantee-exact-integer x msg)
+    (if (not (exact-integer? x))
+        (error msg x "not an exact integer")))
 
-(define (guarantee-exact-positive-integer x msg)
-  (if (not (exact-positive-integer? x))
+  (define (guarantee-exact-positive-integer x msg)
+    (if (not (exact-positive-integer? x))
+        (error msg x "not an exact positive integer")))
+
+  (define (guarantee-exact-nonnegative-integer x msg)
+    (unless (or (zero? x) (exact-positive-integer? x))
       (error msg x "not an exact positive integer")))
 
-(define (guarantee-exact-nonnegative-integer x msg)
-  (unless (or (zero? x) (exact-positive-integer? x))
-      (error msg x "not an exact positive integer")))
+  (define true #t)
+  (define false #f)
 
-(define true #t)
-(define false #f)
+  (define unspecific (void))
 
-(define unspecific (void))
+  (define (runtime)
+    (let ((t (current-time 'time-process)))
+      (+ (time-second t)
+         (/ (time-nanosecond t) 1e9))))
 
-(define (runtime)
-  (let ((t (current-time 'time-process)))
-    (+ (time-second t)
-       (/ (time-nanosecond t) 1e9))))
+  (define (there-exists? items predicate)
+    (let loop ((items* items))
+      (if (pair? items*)
+          (if (predicate (car items*))
+              #t
+              (loop (cdr items*)))
+          (begin
+            (if (not (null? items*))
+                (error ":not-list items" 'THERE-EXISTS?))
+            #f))))
 
-(define (there-exists? items predicate)
-  (let loop ((items* items))
-    (if (pair? items*)
-        (if (predicate (car items*))
-            #t
-            (loop (cdr items*)))
-        (begin
-          (if (not (null? items*))
-              (error ":not-list items" 'THERE-EXISTS?))
-          #f))))
+  (define (for-all? items predicate)
+    (let loop ((items* items))
+      (if (pair? items*)
+          (if (predicate (car items*))
+              (loop (cdr items*))
+              #f)
+          (begin
+            (if (not (null? items*))
+                (error ":not-list items" 'FOR-ALL?))
+            #t))))
 
-(define (for-all? items predicate)
-  (let loop ((items* items))
-    (if (pair? items*)
-        (if (predicate (car items*))
-            (loop (cdr items*))
-            #f)
-        (begin
-          (if (not (null? items*))
-              (error ":not-list items" 'FOR-ALL?))
-          #t))))
+  (define (symbol<? x y)
+    (string<? (symbol->string x)
+              (symbol->string x)))
 
-(define (symbol<? x y)
-  (string<? (symbol->string x)
-            (symbol->string x)))
+  (define* (generate-uninterned-symbol #:optional s)
+    (if (default-object? s)
+        (gensym)
+        (if (symbol? s) 
+            (gensym (symbol->string s))
+            (gensym s))))
 
-(define* (generate-uninterned-symbol #:optional s)
-  (if (default-object? s)
-      (gensym)
-      (if (symbol? s) 
-          (gensym (symbol->string s))
-          (gensym s))))
+  (define string->uninterned-symbol gensym)
 
-(define string->uninterned-symbol gensym)
+  (define (undefined-value? object)
+    (or (eq? object unspecific)
+        ;;(and (variable? object) (not (variable-bound? object)))
+        ;;(eq? object (object-new-type (ucode-type constant) 2))
+        ))
 
-(define (undefined-value? object)
-  (or (eq? object unspecific)
-      ;;(and (variable? object) (not (variable-bound? object)))
-      ;;(eq? object (object-new-type (ucode-type constant) 2))
-      ))
+  (define string-find-next-char-in-set string-index)
 
-(define string-find-next-char-in-set string-index)
+  (define (string-search-forward pattern string)
+    (string-contains string pattern))
 
-(define (string-search-forward pattern string)
-  (string-contains string pattern))
+  (define (string-head string end)
+    (substring string 0 end))
 
-(define (string-head string end)
-  (substring string 0 end))
+  (define (string-tail string start)
+    (substring string start (string-length string)))
 
-(define (string-tail string start)
-  (substring string start (string-length string)))
+  (define write-line
+    (case-lambda
+      ((obj) (write-line obj (current-output-port)))
+      ((obj port) (display obj port) (newline port))))
 
-(define write-line
-  (case-lambda
-    ((obj) (write-line obj (current-output-port)))
-    ((obj port) (display obj port) (newline port))))
+  (define symbol-append
+    (lambda args
+      (string->symbol (apply string-append (map symbol->string args)))))
 
-(define symbol-append
-  (lambda args
-    (string->symbol (apply string-append (map symbol->string args)))))
+  (define (symbol . args)
+    (define (ensure-symbol s)
+      (cond
+       ((symbol? s) s)
+       ((number? s) (string->symbol (number->string s)))
+       ((string? s) (string->symbol s))
+       (else (error "wrong type" s 'symbol))))
+    (apply symbol-append (map ensure-symbol args)))
 
-(define (symbol . args)
-  (define (ensure-symbol s)
-    (cond
-     ((symbol? s) s)
-     ((number? s) (string->symbol (number->string s)))
-     ((string? s) (string->symbol s))
-     (else (error "wrong type" s 'symbol))))
-  (apply symbol-append (map ensure-symbol args)))
+  (define (sort elements proc)
+    (chez:sort proc elements))
 
-(define (sort elements proc)
-  (chez:sort proc elements))
+  (define (run-shell-command cmd . rest)
+    (system cmd))
 
-(define (run-shell-command cmd . rest)
-  (system cmd))
+  (define (user-homedir-pathname)
+    (string-append (getenv "HOME") "/"))
 
-(define (user-homedir-pathname)
-  (string-append (getenv "HOME") "/"))
+  (define (system-tmpdir-pathname) "/tmp/")
 
-(define (system-tmpdir-pathname) "/tmp/")
+  (define (->namestring pathname)
+    pathname)
 
-(define (->namestring pathname)
-  pathname)
+  (define working-directory-pathname
+    (case-lambda
+      ((arg) (cd arg))
+      (else (cd))))
+
+  (define-syntax with-working-directory-pathname
+    (syntax-rules ()
+      ((_ dir thunk)
+       (parameterize ((cd dir))
+         (thunk)))))
+
+  (define pwd working-directory-pathname)
+
+  (define current-load-pathname working-directory-pathname)
 
 ;;; temporary graphics fix
-(define (graphics-type arg) #f)
+  (define (graphics-type arg) #f)
 
-;; This function is used in a context where symbols are canonicalized.
-;; Therefore we emit a lowercase symbol.  (This module is loaded
-;; preserving case.)
-(define (graphics-type-name name) 'x)
+  ;; This function is used in a context where symbols are canonicalized.
+  ;; Therefore we emit a lowercase symbol.  (This module is loaded
+  ;; preserving case.)
+  (define (graphics-type-name name) 'x)
 
-)
+  )
